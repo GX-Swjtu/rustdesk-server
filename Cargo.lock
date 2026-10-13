@@ -1646,6 +1646,7 @@ dependencies = [
  "protobuf-codegen",
  "rand 0.8.5",
  "regex",
+ "rustdesk-native-p2p",
  "rustls-native-certs 0.8.4",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -3433,6 +3434,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustdesk-native-p2p"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "log",
+ "protobuf",
+ "protobuf-codegen",
+ "serde",
+ "serde_json",
+ "sodiumoxide",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

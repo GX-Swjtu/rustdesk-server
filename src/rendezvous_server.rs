@@ -100,6 +100,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct RendezvousServer {
+    native_p2p: crate::native_p2p::NativeP2p,
     tcp_punch: Arc<Mutex<HashMap<SocketAddr, Sink>>>,
     pm: PeerMap,
     tx: Sender,
@@ -155,6 +156,7 @@ impl RendezvousServer {
             )
         };
         let mut rs = Self {
+            native_p2p: crate::native_p2p::NativeP2p::new(),
             tcp_punch: Arc::new(Mutex::new(HashMap::new())),
             pm,
             tx: tx.clone(),
@@ -375,6 +377,9 @@ impl RendezvousServer {
                     // B registered
                     if !rp.id.is_empty() && rp.id.len() <= MAX_PEER_ID_LEN {
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
+                        if let Err(error) = self.native_p2p.register(&rp, try_into_v4(addr), &self.pm, self.inner.sk.as_ref()).await {
+                            log::trace!("native capability: {error}");
+                        }
                         self.update_addr(rp.id, addr, socket).await?;
                         if self.inner.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
@@ -530,6 +535,19 @@ impl RendezvousServer {
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
+                Some(rendezvous_message::Union::NativeP2pV1(message)) if !ws && !ALWAYS_USE_RELAY.load(Ordering::SeqCst) => {
+                    match self.native_p2p.handle(&message, try_into_v4(addr), self.inner.sk.as_ref()) {
+                        Ok(outcome) => {
+                            if let Some((target, invite)) = outcome.invite {
+                                if let Err(error) = self.tx.send(Data::Msg(crate::native_p2p::envelope(invite).into(), target)) {
+                                    log::trace!("native invitation: {error}");
+                                }
+                            }
+                            Self::send_to_sink(sink, crate::native_p2p::envelope(outcome.response)).await;
+                        }
+                        Err(error) => log::trace!("native request: {error}"),
+                    }
+                }
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
