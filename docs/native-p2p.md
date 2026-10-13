@@ -38,11 +38,25 @@ the original connection flow; update clients before switching to this server.
 Unsigned legacy registrations do not remove native capabilities. Only a signed
 version-0 advertisement disables them and cancels their pending attempts.
 
+The adaptive extension requires both signed capabilities to include
+`strategies=1`. Without it, tickets and plans omit all new JSON fields and the
+original fixed Mode 2 remains in use. With it, hbbs selects a Mode 1/2 and TTL
+pair from at most 1024 network-pair histories, expiring after one hour. Selection
+penalizes a choice once; repeated polls reuse it. Only a signed caller report
+after the client has authenticated KCP rewards the selected strategy and consumes
+the attempt. A UDP diagnostic cannot establish that condition and never reports
+success to history. See the common README for limits and the port heuristic.
+This extension changes only the common pin and this documentation in hbbs;
+no additional server-wrapper or legacy-rendezvous hook is required.
+
 Admission regression (Python 3 and the libsodium shared library are required):
 
 ```sh
 cargo test --locked --manifest-path libs/hbb_common/native-p2p/Cargo.toml
 python3 tests/native_p2p_admission.py /absolute/path/to/hbbs
+python3 tests/native_p2p_admission.py /absolute/path/to/hbbs --strategies
+# Also verify new advertisements against the admission-fixed v3 server:
+python3 tests/native_p2p_admission.py /absolute/path/to/v3/hbbs --strategies --legacy-strategies-server
 ```
 
 The test starts a temporary keyed hbbs on loopback port 32216, exercises missing,

@@ -1,6 +1,8 @@
 """Run with Python 3 and libsodium: native_p2p_admission.py /absolute/path/to/hbbs.
 
 Uses an isolated loopback server/database. --expect-vulnerable checks the old binary.
+--strategies advertises the adaptive capability; add --legacy-strategies-server
+when checking a pre-strategies server (the admission-fixed v3 binary).
 """
 import ctypes as C
 import ctypes.util
@@ -110,7 +112,10 @@ def register(name):
 def advertise(device, version=1, payload=None):
     sock = device['socket']
     if payload is None:
-        payload = signed(device, {'Advertise': {'version': version}})
+        capability = {'version': version}
+        if '--strategies' in sys.argv and version:
+            capability['strategies'] = 1
+        payload = signed(device, {'Advertise': capability})
     packet = field(1, device['id']) + field(1000, version) + field(1001, payload)
     sock.sendto(field(6, packet), ('127.0.0.1', 32216))
     while 7 not in fields(sock.recv(65535)):
@@ -160,6 +165,7 @@ with tempfile.TemporaryDirectory(prefix='rustdesk-native-review-') as directory:
             server_key = (pathlib.Path(directory) / 'id_ed25519.pub').read_text().strip()
             first = begin(caller, peer, server_key)
             result['correct_key'] = next(iter(first))
+            result['negotiated_strategies'] = first['Ticket'].get('strategies', 0)
             session = first['Ticket']['session']
             result['session_before_unsigned_withdrawal'] = rpc(caller, {'Poll': {'session': session}})
             # An unrelated UDP socket, no device signature and no device key.
@@ -188,6 +194,7 @@ with tempfile.TemporaryDirectory(prefix='rustdesk-native-review-') as directory:
 print(json.dumps(result, indent=2))
 assert result['legacy_without_server_key_failure'] == 3
 assert result['correct_key'] == 'Ticket'
+assert result['negotiated_strategies'] == int('--strategies' in sys.argv and '--legacy-strategies-server' not in sys.argv)
 assert result['session_before_unsigned_withdrawal'] == 'Waiting'
 assert result['disabled_target'] == 'Unsupported'
 assert 'Error' in result['session_after_signed_withdrawal']
