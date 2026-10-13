@@ -536,7 +536,7 @@ impl RendezvousServer {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::NativeP2pV1(message)) if !ws && !ALWAYS_USE_RELAY.load(Ordering::SeqCst) => {
-                    match self.native_p2p.handle(&message, try_into_v4(addr), self.inner.sk.as_ref()) {
+                    match self.native_p2p.handle(&message, try_into_v4(addr), self.inner.sk.as_ref(), key) {
                         Ok(outcome) => {
                             if let Some((target, invite)) = outcome.invite {
                                 if let Err(error) = self.tx.send(Data::Msg(crate::native_p2p::envelope(invite).into(), target)) {

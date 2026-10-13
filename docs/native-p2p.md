@@ -32,6 +32,23 @@ Signed requests are quota limited and replay checked; candidate UDP public IPs
 must match the registered signaling exit. No new unauthenticated punch request
 is accepted. Normal RustDesk client identity/login/permission checks still run.
 
+Native Begin requests enforce the same configured server key as ordinary punch
+requests. An older native test client without that signed field falls back to
+the original connection flow; update clients before switching to this server.
+Unsigned legacy registrations do not remove native capabilities. Only a signed
+version-0 advertisement disables them and cancels their pending attempts.
+
+Admission regression (Python 3 and the libsodium shared library are required):
+
+```sh
+cargo test --locked --manifest-path libs/hbb_common/native-p2p/Cargo.toml
+python3 tests/native_p2p_admission.py /absolute/path/to/hbbs
+```
+
+The test starts a temporary keyed hbbs on loopback port 32216, exercises missing,
+wrong and correct keys plus unsigned, forged and replayed withdrawals, and stops
+the server afterward. `--expect-vulnerable` compares an older native test binary.
+
 For rollback, stop only the test hbbs/hbbr processes and restore the clients'
 saved configuration/service paths. Production hbbs/hbbr and frp are independent.
 

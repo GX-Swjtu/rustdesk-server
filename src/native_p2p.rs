@@ -31,8 +31,7 @@ impl NativeP2p {
     }
 
     pub async fn register(&self, rp: &RegisterPeer, address: SocketAddr, peers: &PeerMap, key: Option<&sign::SecretKey>) -> Result<()> {
-        if !Self::enabled() || rp.native_p2p_version != p2p::VERSION || key.is_none() {
-            self.0.lock().unwrap().remove(&rp.id);
+        if !Self::enabled() || rp.native_p2p_capability.is_empty() || key.is_none() {
             return Ok(());
         }
         let key = key.context("native server key unavailable")?;
@@ -43,9 +42,9 @@ impl NativeP2p {
         self.0.lock().unwrap().advertise(Device { id: rp.id.clone(), key: public, signed_key, address }, &rp.native_p2p_capability)
     }
 
-    pub fn handle(&self, message: &NativeP2pV1, source: SocketAddr, key: Option<&sign::SecretKey>) -> Result<Outcome> {
+    pub fn handle(&self, message: &NativeP2pV1, source: SocketAddr, key: Option<&sign::SecretKey>, licence_key: &str) -> Result<Outcome> {
         hbb_common::anyhow::ensure!(Self::enabled() && message.version == p2p::VERSION, "native disabled or unsupported");
-        self.0.lock().unwrap().handle(&message.payload, source, key.context("native server key unavailable")?)
+        self.0.lock().unwrap().handle(&message.payload, source, key.context("native server key unavailable")?, licence_key)
     }
 }
 
