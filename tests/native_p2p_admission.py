@@ -1,8 +1,8 @@
 """Run with Python 3 and libsodium: native_p2p_admission.py /absolute/path/to/hbbs.
 
-Uses an isolated loopback server/database. --expect-vulnerable checks the old binary.
---strategies advertises the adaptive capability; add --legacy-strategies-server
-when checking a pre-strategies server (the admission-fixed v3 binary).
+Uses an isolated network namespace, loopback server and ephemeral database.
+Run as root on Linux. The namespace gives signed requests a real routable-source
+fixture without changing host routes or accepting loopback in production.
 """
 import ctypes as C
 import ctypes.util
@@ -14,6 +14,21 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+
+if not os.environ.get("NATIVE_P2P_TEST_SOURCE"):
+    assert os.geteuid() == 0, "isolated network fixture requires root"
+    namespace = "np-admission-" + uuid.uuid4().hex[:8]
+    subprocess.run(["ip", "netns", "add", namespace], check=True)
+    try:
+        subprocess.run(["ip", "-n", namespace, "link", "set", "lo", "up"], check=True)
+        subprocess.run(["ip", "-n", namespace, "addr", "add", "192.0.2.1/24", "dev", "lo"], check=True)
+        env = dict(os.environ, NATIVE_P2P_TEST_SOURCE="192.0.2.1")
+        outcome = subprocess.run(["ip", "netns", "exec", namespace, sys.executable, str(pathlib.Path(__file__).resolve()), *sys.argv[1:]], env=env)
+    finally:
+        subprocess.run(["ip", "netns", "delete", namespace], check=True)
+    sys.exit(outcome.returncode)
+SOURCE = os.environ["NATIVE_P2P_TEST_SOURCE"]
 
 sodium = C.CDLL(ctypes.util.find_library('sodium'))
 sodium.sodium_init()
@@ -68,7 +83,7 @@ def keypair(kind):
 def signed(device, action):
     body = json.dumps(dict(id=device['id'], nonce=list(os.urandom(24)),
                            time=int(time.time()), action=action), separators=(',', ':')).encode()
-    message = b'rustdesk-native-p2p-v1\0' + body
+    message = b'rustdesk-native-udp-punch\0' + body
     signature = C.create_string_buffer(64)
     length = C.c_ulonglong()
     assert sodium.crypto_sign_detached(signature, C.byref(length), message,
@@ -87,7 +102,7 @@ def exact(sock, n):
 def tcp(message):
     header_size = next(n for n in range(1, 5) if len(message) < 1 << (8*n-2))
     packet = (len(message)*4 + header_size-1).to_bytes(header_size, 'little') + message
-    with socket.create_connection(('127.0.0.1', 32216), timeout=2) as sock:
+    with socket.create_connection(('127.0.0.1', 32216), timeout=2, source_address=(SOURCE, 0)) as sock:
         sock.sendall(packet)
         first = exact(sock, 1)
         header = first + exact(sock, first[0] & 3)
@@ -101,7 +116,7 @@ def rpc(device, action):
 def register(name):
     pk, sk = keypair('sign')
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('127.0.0.1', 0))
+    sock.bind((SOURCE, 0))
     sock.settimeout(2)
     device = dict(id=name, sk=sk, socket=sock)
     sock.sendto(field(15, field(1, name) + field(2, os.urandom(16)) + field(3, pk)), ('127.0.0.1', 32216))
@@ -112,9 +127,7 @@ def register(name):
 def advertise(device, version=1, payload=None):
     sock = device['socket']
     if payload is None:
-        capability = {'version': version}
-        if '--strategies' in sys.argv and version:
-            capability['strategies'] = 1
+        capability = {'capability': 'native-udp-punch', 'enabled': bool(version)}
         payload = signed(device, {'Advertise': capability})
     packet = field(1, device['id']) + field(1000, version) + field(1001, payload)
     sock.sendto(field(6, packet), ('127.0.0.1', 32216))
@@ -130,7 +143,6 @@ def begin(caller, peer, key=None):
     return rpc(caller, {'Begin': action})
 
 binary = pathlib.Path(sys.argv[1]).resolve(strict=True)
-fixed = '--expect-vulnerable' not in sys.argv[2:]
 for kind in [socket.SOCK_STREAM, socket.SOCK_DGRAM]:
     with socket.socket(socket.AF_INET, kind) as check:
         if kind == socket.SOCK_STREAM:
@@ -165,7 +177,7 @@ with tempfile.TemporaryDirectory(prefix='rustdesk-native-review-') as directory:
             server_key = (pathlib.Path(directory) / 'id_ed25519.pub').read_text().strip()
             first = begin(caller, peer, server_key)
             result['correct_key'] = next(iter(first))
-            result['negotiated_strategies'] = first['Ticket'].get('strategies', 0)
+            result['negotiated_capability'] = first['Ticket']['capability']
             session = first['Ticket']['session']
             result['session_before_unsigned_withdrawal'] = rpc(caller, {'Poll': {'session': session}})
             # An unrelated UDP socket, no device signature and no device key.
@@ -175,7 +187,7 @@ with tempfile.TemporaryDirectory(prefix='rustdesk-native-review-') as directory:
             time.sleep(.15)
             result['session_after_unsigned_withdrawal'] = rpc(caller, {'Poll': {'session': session}})
             advertise(peer)
-            forged = signed(dict(id=peer['id'], sk=caller['sk']), {'Advertise': {'version': 0}})
+            forged = signed(dict(id=peer['id'], sk=caller['sk']), {'Advertise': {'capability': 'native-udp-punch', 'enabled': False}})
             advertise(peer, 0, forged)
             result['session_after_forged_withdrawal'] = rpc(caller, {'Poll': {'session': session}})
             withdrawal = advertise(peer, 0)
@@ -194,16 +206,11 @@ with tempfile.TemporaryDirectory(prefix='rustdesk-native-review-') as directory:
 print(json.dumps(result, indent=2))
 assert result['legacy_without_server_key_failure'] == 3
 assert result['correct_key'] == 'Ticket'
-assert result['negotiated_strategies'] == int('--strategies' in sys.argv and '--legacy-strategies-server' not in sys.argv)
+assert result['negotiated_capability'] == 'native-udp-punch'
 assert result['session_before_unsigned_withdrawal'] == 'Waiting'
 assert result['disabled_target'] == 'Unsupported'
 assert 'Error' in result['session_after_signed_withdrawal']
-if fixed:
-    assert result['missing_key'] == result['wrong_key'] == 'Error'
-    assert result['session_after_unsigned_withdrawal'] == 'Waiting'
-    assert result['session_after_forged_withdrawal'] == 'Waiting'
-    assert result['after_reenable_and_replayed_withdrawal'] == 'Ticket'
-else:
-    assert result['missing_key'] == result['wrong_key'] == 'Ticket'
-    assert 'Error' in result['session_after_unsigned_withdrawal']
-    assert result['after_reenable_and_replayed_withdrawal'] == 'Unsupported'
+assert result['missing_key'] == result['wrong_key'] == 'Error'
+assert result['session_after_unsigned_withdrawal'] == 'Waiting'
+assert result['session_after_forged_withdrawal'] == 'Waiting'
+assert result['after_reenable_and_replayed_withdrawal'] == 'Ticket'

@@ -1,6 +1,6 @@
-# Native P2P v1 test server
+# Native UDP punching test server
 
-hbbs now coordinates the optional, authenticated NativeP2pV1 strategy. hbbr is
+hbbs now coordinates the optional, authenticated native-udp-punch capability. hbbr is
 unchanged. The implementation and frp v0.71.0 notice are in
 `libs/hbb_common/native-p2p/`. Use the server's own common-library baseline and
 cherry-pick only the P2P patch series from the client branch.
@@ -24,44 +24,48 @@ test public key. Do not overwrite a production key/database or replace the
 production services to run these tests.
 
 The feature is on by default; `NATIVE_P2P=N` disables it. The existing
-`ALWAYS_USE_RELAY=Y` gate also excludes it. Both devices must have recently
-advertised signed version-1 capabilities. Unsupported/Android peers continue
-through the original rendezvous flow. Each device is limited to one attempt;
-there are at most 64 sessions, expiring after 45 seconds, and 4096 capabilities.
-Signed requests are quota limited and replay checked; candidate UDP public IPs
-must match the registered signaling exit. No new unauthenticated punch request
-is accepted. Normal RustDesk client identity/login/permission checks still run.
+`ALWAYS_USE_RELAY=Y` gate also excludes it. Both devices must recently advertise
+the single signed `native-udp-punch` capability. Old experimental clients,
+upstream clients, Android and disabled peers use the original rendezvous path.
+There are no separate V1/V2 or `strategies` declarations. The protobuf envelope
+name is unchanged; this expansion adds no schema field or listener port.
 
-Native Begin requests enforce the same configured server key as ordinary punch
-requests. An older native test client without that signed field falls back to
-the original connection flow; update clients before switching to this server.
-Unsigned legacy registrations do not remove native capabilities. Only a signed
-version-0 advertisement disables them and cancels their pending attempts.
+The common coordinator selects one of five role/TTL/delay families and stores
+at most 1024 network-profile records for one hour. Selection costs one point;
+only a caller report after the existing KCP/device-identity handshake rewards
+two points and consumes the attempt. Native attempts are bounded at 45 seconds,
+one per device and 64 server-wide, with 4096 capability records. Signed disable
+requests cancel sessions; unsigned, forged and replayed withdrawals do not.
 
-The adaptive extension requires both signed capabilities to include
-`strategies=1`. Without it, tickets and plans omit all new JSON fields and the
-original fixed Mode 2 remains in use. With it, hbbs selects a Mode 1/2 and TTL
-pair from at most 1024 network-pair histories, expiring after one hour. Selection
-penalizes a choice once; repeated polls reuse it. Only a signed caller report
-after the client has authenticated KCP rewards the selected strategy and consumes
-the attempt. A UDP diagnostic cannot establish that condition and never reports
-success to history. See the common README for limits and the port heuristic.
-This extension changes only the common pin and this documentation in hbbs;
-no additional server-wrapper or legacy-rendezvous hook is required.
+Public candidates must be observed through device-signed TCP requests for that
+session. Signatures and participant eligibility are checked before adding the
+source IP; at most four exits and four supplementary observations are allowed.
+STUN addresses alone are insufficient. Only the native module uses these lists;
+original rendezvous source-IP checks remain unchanged. This expansion needs
+no additional hbbs wrapper change and does not change hbbr.
 
-Admission regression (Python 3 and the libsodium shared library are required):
+Regression tests (Linux root for isolated namespaces, Python 3, libsodium and iproute2):
 
 ```sh
 cargo test --locked --manifest-path libs/hbb_common/native-p2p/Cargo.toml
-python3 tests/native_p2p_admission.py /absolute/path/to/hbbs
-python3 tests/native_p2p_admission.py /absolute/path/to/hbbs --strategies
-# Also verify new advertisements against the admission-fixed v3 server:
-python3 tests/native_p2p_admission.py /absolute/path/to/v3/hbbs --strategies --legacy-strategies-server
+sudo python3 tests/native_p2p_admission.py /absolute/path/to/hbbs
 ```
 
-The test starts a temporary keyed hbbs on loopback port 32216, exercises missing,
-wrong and correct keys plus unsigned, forged and replayed withdrawals, and stops
-the server afterward. `--expect-vulnerable` compares an older native test binary.
+The admission test uses an isolated namespace and ephemeral keyed server/database.
+It checks original admission-key rejection, new signed admission, unsigned/forged/
+signed/replayed withdrawals and disabled-peer fallback. Common tests cover
+capability incompatibility, session membership, source proofs, quotas and expiry.
+The client repository's NAT lab adds Linux conntrack/SNAT, LAN fixtures, multiple
+exits, packet loss, cancellation and authenticated KCP communication. Neither
+UDP nor KCP diagnostics claim full RustDesk desktop acceptance.
+
+The 2026-10-14 on-demand validation is recorded in the client repository's
+`tools/native-p2p/ACCEPTANCE-20261014.md`: final Mode 0–4 groups are 10/10 each,
+multi-egress 9/10, and real Windows cold connections meet the requested
+threshold in both directions. Android builds and true-device checks are
+reported separately. This expansion pins common `a7fd568` on the server's own
+baseline (the client-equivalent patch is `ce2570b`), with no new hbbs runtime
+hook or protobuf schema change relative to v4.
 
 For rollback, stop only the test hbbs/hbbr processes and restore the clients'
 saved configuration/service paths. Production hbbs/hbbr and frp are independent.
