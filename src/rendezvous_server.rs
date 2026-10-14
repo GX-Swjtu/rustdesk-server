@@ -52,6 +52,7 @@ type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
     TcpStream(TcpStreamSink),
+    AccountTcp(crate::account_handshake::SecureSink),
     Ws(WsSink),
 }
 type Sender = mpsc::UnboundedSender<Data>;
@@ -557,6 +558,8 @@ impl RendezvousServer {
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
+                    // The API bearer credential must never be forwarded to a peer over UDP.
+                    rf.token.clear();
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
@@ -882,6 +885,9 @@ impl RendezvousServer {
             if let Ok(bytes) = msg.write_to_bytes() {
                 match sink {
                     Sink::TcpStream(s) => {
+                        allow_err!(s.send(Bytes::from(bytes)).await);
+                    }
+                    Sink::AccountTcp(s) => {
                         allow_err!(s.send(Bytes::from(bytes)).await);
                     }
                     Sink::Ws(ws) => {
@@ -1241,6 +1247,17 @@ impl RendezvousServer {
                     if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                         break;
                     }
+                }
+            }
+        } else if crate::account_handshake::enabled() && self.inner.sk.is_some()
+            && crate::account_handshake::waiting_for_greeting(&stream).await?
+        {
+            let sk = self.inner.sk.as_ref().ok_or_else(|| hbb_common::anyhow::anyhow!("Missing signing key"))?;
+            let (a, mut b) = crate::account_handshake::accept(stream, sk).await?.split();
+            sink = Some(Sink::AccountTcp(a));
+            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
+                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                    break;
                 }
             }
         } else {
