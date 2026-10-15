@@ -1,0 +1,16 @@
+name: Fork server packaging CI
+on:
+  push:
+    branches: [master, main, 'codex/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts -p test_release.py
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck='' .github/workflows/fork-ci.yml .github/workflows/fork-build.yml .github/workflows/fork-release.yml

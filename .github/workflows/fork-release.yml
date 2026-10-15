@@ -1,0 +1,45 @@
+name: Fork server release (draft only)
+on:
+  push:
+    tags: ['server-v*-gx.*']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: fork-server-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'GX-Swjtu/rustdesk-server' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 scripts/release.py validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+  build:
+    needs: validate
+    uses: ./.github/workflows/fork-build.yml
+    with:
+      source-ref: ${{ github.sha }}
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: server-*
+          merge-multiple: true
+          path: dist/release
+      - run: python3 scripts/release.py draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
