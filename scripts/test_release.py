@@ -24,6 +24,9 @@ class ServerReleaseTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / name, path)
             (root / "target/release").mkdir(parents=True)
+            (root / "libs/hbb_common/native-p2p").mkdir(parents=True)
+            for name in ["NOTICE", "LICENSE.frp"]:
+                (root / "libs/hbb_common/native-p2p" / name).write_text("test notice")
             for name in ["hbbs", "hbbr", "rustdesk-utils"]:
                 for extension in ["", ".exe"]:
                     (root / "target/release" / (name + extension)).write_bytes(b"test binary")
@@ -43,7 +46,9 @@ class ServerReleaseTests(unittest.TestCase):
                     with tarfile.open(path) as archive:
                         names = archive.getnames()
                         source = json.load(archive.extractfile("SOURCE.json"))
-                self.assertEqual(len(names), 10)
+                self.assertEqual(len(names), 12)
+                self.assertIn("licenses/native-p2p/LICENSE.frp", names)
+                self.assertIn("licenses/native-p2p/NOTICE", names)
                 self.assertIn("hbbs.exe" if "windows" in target else "hbbs", names)
                 self.assertNotIn("id_ed25519", names)
                 self.assertNotIn("db_v2.sqlite3", names)

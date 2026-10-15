@@ -35,6 +35,8 @@ def package():
     files += [(ROOT / name, name) for name in (
         "LICENSE", "README.md", "docs/native-p2p.md", "docs/account-handshake.md",
         "docs/environment-variables.md", "docs/fork-release.md")]
+    files += [(ROOT / "libs/hbb_common/native-p2p" / name, "licenses/native-p2p/" + name)
+              for name in ("NOTICE", "LICENSE.frp")]
     source = json.dumps({"repository": REPO, "version": VERSION,
         "commit": command("git", "rev-parse", "HEAD"),
         "hbb_common": command("git", "rev-parse", "HEAD:libs/hbb_common")}, indent=2).encode()
